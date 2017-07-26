@@ -79,6 +79,7 @@ use POSIX;
 use Net::SMTP;
 use Template;
 use Data::UUID;
+use Encode;
 
 # prototypes
 sub fatal($);
@@ -112,7 +113,7 @@ if (open(PID_FILE, "< $pid_file\0")) {
         }
         unlink($pid_file);
     } elsif (kill 0 => $pid) {
-        if (!$quiet) {
+        if ($debug) {
             output(sprintf("Another instance [%d] is currently running.", $pid));
         }
         exit;
@@ -230,7 +231,7 @@ my $domain_admin_sth = $dbh->prepare($query)
 
 my %report_statements;
 while (my($element, $sort) = each(%sort)) {
-    next if exists $report_statements{$sort};
+    next if exists $report_statements{$element};
     my %report_type_lookup = (
            'ham'         => 'H',
            'spam'        => 'S',
@@ -251,7 +252,7 @@ $query .= <<"endSQL;";
   ORDER BY mm.$sort
 endSQL;
 
-    $report_statements{$sort} = $dbh->prepare($query)
+    $report_statements{$element} = $dbh->prepare($query)
   or fatal(sprintf("Couldn't prepare query: %s", $dbh->errstr));
 }
 
@@ -291,7 +292,7 @@ while (my @row3 = $users_sth->fetchrow_array()) {
     my $report_count = 0;
     my $at_least_one = 0;
     for my $report_element (@report_order) {
-        $sth = $report_statements{$sort{$report_element}};
+        $sth = $report_statements{$report_element};
         
         $sth->execute($user_id)
                   or fatal(sprintf("Couldn't execute query: %s", $dbh->errstr));
@@ -400,7 +401,13 @@ sub send_message($$$$$) {
     $smtp->mail($admin_email);
     $smtp->to($recip);
     $smtp->data();
-    $smtp->datasend($output);
+    my ($output_mime) = '';
+    for my $line (split("\n", $output)) {
+        $line =~ s/[\r\n]//g;
+        $line = 'Subject: '.encode('MIME-Header', decode_utf8($1)) if($line =~ /^Subject: (.*)/);
+        $output_mime .= "$line\n";
+    }
+    $smtp->datasend($output_mime);
     $smtp->dataend();
 }
 
